@@ -15,7 +15,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -38,7 +37,7 @@ public class Socket extends Emitter {
     private BasicListener listener;
     private String AuthToken;
     private HashMap<Long, Object[]> acks;
-    private ConcurrentHashMap<String, Channel> channels;
+    private List<Channel> channels;
     private WebSocketAdapter adapter;
     private Map<String, String> headers;
 
@@ -47,7 +46,7 @@ public class Socket extends Emitter {
         factory = new WebSocketFactory().setConnectionTimeout(5000);
         counter = new AtomicInteger(1);
         acks = new HashMap<>();
-        channels = new ConcurrentHashMap<>();
+        channels = new ArrayList<>();
         adapter = getAdapter();
         headers = new HashMap<>();
         putDefaultHeaders();
@@ -61,21 +60,20 @@ public class Socket extends Emitter {
     }
 
     public Channel createChannel(String name) {
-        if(channels.containsKey(name)){
-            return channels.get(name);
-        }
-
         Channel channel = new Channel(name);
-        channels.put(name, channel);
+        channels.add(channel);
         return channel;
     }
 
-    public ConcurrentHashMap<String, Channel> getChannels() {
+    public List<Channel> getChannels() {
         return channels;
     }
 
     public Channel getChannelByName(String name) {
-        channels.get(name);
+        for (Channel channel : channels) {
+            if (channel.getChannelName().equals(name))
+                return channel;
+        }
         return null;
     }
 
@@ -419,8 +417,8 @@ public class Socket extends Emitter {
 
 
     private void subscribeChannels() {
-        for(Map.Entry<String, Channel> entry : channels.entrySet()) {
-            entry.getValue().subscribe();
+        for (Channel channel : channels) {
+            channel.subscribe();
         }
     }
 
@@ -438,73 +436,83 @@ public class Socket extends Emitter {
 
     public void connect() {
 
-        try {
-            ws = factory.createSocket(URL);
-        } catch (IOException e) {
-            logger.severe(e.toString());
-        }
-        ws.addExtension("permessage-deflate; client_max_window_bits");
-        for (Map.Entry<String, String> entry : headers.entrySet()) {
-            ws.addHeader(entry.getKey(), entry.getValue());
-        }
-
-        ws.addListener(adapter);
-
-        try {
-            ws.connect();
-        } catch (OpeningHandshakeException e) {
-            // A violation against the WebSocket protocol was detected
-            // during the opening handshake.
-
-            logger.severe(e.toString());
-            // Status line.
-            StatusLine sl = e.getStatusLine();
-            logger.info("=== Status Line ===");
-            logger.info("HTTP Version  = \n" + sl.getHttpVersion());
-            logger.info("Status Code   = \n" + sl.getStatusCode());
-            logger.info("Reason Phrase = \n" + sl.getReasonPhrase());
-
-            // HTTP headers.
-            Map<String, List<String>> headers = e.getHeaders();
-            logger.info("=== HTTP Headers ===");
-            for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
-                // Header name.
-                String name = entry.getKey();
-
-                // Values of the header.
-                List<String> values = entry.getValue();
-
-                if (values == null || values.size() == 0) {
-                    // Print the name only.
-                    logger.info(name);
-                    continue;
-                }
-
-                for (String value : values) {
-                    // Print the name and the value.
-                    logger.info(name + value + "\n");
-                }
+        if(ws == null || ws.getState() == WebSocketState.CLOSED) {
+            try {
+                ws = factory.createSocket(URL);
+            } catch (IOException e) {
+                logger.severe(e.toString());
             }
-        } catch (WebSocketException e) {
-            listener.onConnectError(Socket.this, e);
-            reconnect();
+            ws.addExtension("permessage-deflate; client_max_window_bits");
+            for (Map.Entry<String, String> entry : headers.entrySet()) {
+                ws.addHeader(entry.getKey(), entry.getValue());
+            }
+
+            ws.addListener(adapter);
+
+            try {
+                ws.connect();
+            } catch (OpeningHandshakeException e) {
+                // A violation against the WebSocket protocol was detected
+                // during the opening handshake.
+
+                logger.severe(e.toString());
+                // Status line.
+                StatusLine sl = e.getStatusLine();
+                logger.info("=== Status Line ===");
+                logger.info("HTTP Version  = \n" + sl.getHttpVersion());
+                logger.info("Status Code   = \n" + sl.getStatusCode());
+                logger.info("Reason Phrase = \n" + sl.getReasonPhrase());
+
+                // HTTP headers.
+                Map<String, List<String>> headers = e.getHeaders();
+                logger.info("=== HTTP Headers ===");
+                for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
+                    // Header name.
+                    String name = entry.getKey();
+
+                    // Values of the header.
+                    List<String> values = entry.getValue();
+
+                    if (values == null || values.size() == 0) {
+                        // Print the name only.
+                        logger.info(name);
+                        continue;
+                    }
+
+                    for (String value : values) {
+                        // Print the name and the value.
+                        logger.info(name + value + "\n");
+                    }
+                }
+            } catch (WebSocketException e) {
+                e.printStackTrace();
+                listener.onConnectError(Socket.this, e);
+                reconnect();
+            }
+        }else{
+            logger.warning("Unable to connect: there is an active connection");
         }
 
     }
 
     public void connectAsync() {
-        try {
-            ws = factory.createSocket(URL);
-        } catch (IOException e) {
-            logger.severe(e.toString());
-        }
-        ws.addExtension("permessage-deflate; client_max_window_bits");
-        for (Map.Entry<String, String> entry : headers.entrySet()) {
-            ws.addHeader(entry.getKey(), entry.getValue());
-        }
+        if(ws == null || ws.getState() == WebSocketState.CLOSED){
+            try {
+                ws = factory.createSocket(URL);
+            } catch (IOException e) {
+                logger.severe(e.toString());
+            }
 
-        ws.addListener(adapter);
-        ws.connectAsynchronously();
+            ws.addExtension("permessage-deflate; client_max_window_bits");
+            for (Map.Entry<String, String> entry : headers.entrySet()) {
+                ws.addHeader(entry.getKey(), entry.getValue());
+            }
+
+            ws.addListener(adapter);
+            ws.connectAsynchronously();
+        }else{
+            logger.warning("Unable to connect: there is an active connection");
+        }
     }
 
     private void reconnect() {
@@ -552,7 +560,7 @@ public class Socket extends Emitter {
      */
 
     public WebSocketState getCurrentState() {
-        return ws != null ? ws.getState() : null;
+        return ws.getState();
     }
 
     public Boolean isconnected() {
